@@ -1,0 +1,473 @@
+---
+title: "Trial-Level Analysis of Neurons"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+The goal of this document is to answer the following overarching question: **What is the variation in firing rates across trials?** This yields two sub-questions: **Is there a "drift" effect between the first half and the last half of trials for a neuron's firing rate?** and **How many trials are needed to feel confident in neural analysis?**.
+
+```{r}
+knitr::opts_chunk$set(warning = FALSE)
+library(tidyverse)
+load("copy_creation_VISp_200bins_25sampled.Rda")
+```
+
+The first phase of this analysis was to simply examine firing rate differences across trials. Though relatively straightforward, the goal here was to look at how different the firing rates were across trials, for a given session, across all neurons. In other words, this attempts to visualize firing rate drift. The first visualization looks at the top 5 stimuli a given neuron, while the second examines the average firing rate across all neurons, across all trials, in terms of a response for the top performing stimulus.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+selected_session <- sample(unique(binned_data$site_info.ephys_session_id), 1)
+selected_time_window <- "time.75_275"
+
+session_df <- binned_data %>%
+  filter(site_info.ephys_session_id == selected_session,
+         !is.na(!!sym(selected_time_window))) %>%
+  group_by(siteID, trial_number, labels.natural_scene_stimulus_id) %>%
+  summarise(mean_fr = mean(!!sym(selected_time_window)), .groups = "drop")
+
+selected_siteID <- sample(unique(session_df$siteID), 1)
+
+top5_stimuli <- session_df %>%
+  filter(siteID == selected_siteID) %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarise(avg_fr = mean(mean_fr), .groups = "drop") %>%
+  arrange(desc(avg_fr)) %>%
+  slice_head(n = 5) %>%
+  pull(labels.natural_scene_stimulus_id)
+
+session_df %>%
+  filter(siteID == selected_siteID,
+         labels.natural_scene_stimulus_id %in% top5_stimuli) %>%
+  ggplot(aes(x = trial_number, y = mean_fr, color = labels.natural_scene_stimulus_id)) +
+  geom_line(size = 1) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none") +
+  labs(
+    title = paste("Figure 1: Firing Rate Across Trials, for a given neuron (top 5 stimuli)"),
+    subtitle = paste("Neuron:", selected_siteID, "; Session:", selected_session),
+    x = "Trial Number",
+    y = paste0("Mean Firing Rate (", selected_time_window, ")")
+  )
+
+top_stimulus <- binned_data %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarise(avg_fr = mean(!!sym(selected_time_window)), .groups = "drop") %>%
+  arrange(desc(avg_fr)) %>%
+  slice_head(n = 1) %>%
+  pull(labels.natural_scene_stimulus_id)
+
+binned_data %>%
+  filter(labels.natural_scene_stimulus_id == top_stimulus) %>%
+  group_by(trial_number) %>%
+  summarise(session_mean_fr = mean(!!sym(selected_time_window)), .groups = "drop") %>%
+  ggplot(aes(x = trial_number, y = session_mean_fr)) +
+  geom_line(color = "steelblue", size = 1.2) +
+  geom_point(color = "steelblue", size = 2, alpha = 0.8) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Figure 2: Session-Wide Firing Rate Across Trials",
+    subtitle = paste("Top Stimulus:", top_stimulus, "; Session:", selected_session, "; Across All Neurons"),
+    x = "Trial Number",
+    y = "Mean Firing Rate"
+  )
+
+```
+
+Overall, the graphs are a little bit messy but reflect a positive core takeway: there doesn't seem to be a huge pattern in terms of firing rate from the first trial of a neuron and the last trial. Though firing rates may be slightly higher in the first half than the second half, it doesn't seem to be a large difference. This occurs even when conditioning on stimulus.
+
+The following code statistically tests if there is a significant difference in firing rate between the first half and the second half, *for each neuron*.
+
+```{r}
+selected_time_window <- "time.75_275"
+
+session_df <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  group_by(siteID, trial_number) %>%
+  summarise(mean_fr = mean(!!sym(selected_time_window)), .groups = "drop") %>%
+  group_by(siteID) %>%
+  arrange(trial_number) %>%
+  mutate(
+    trial_rank = row_number(),
+    total_trials = n(),
+    trial_half = ifelse(trial_rank <= total_trials / 2, "First Half", "Second Half")
+  ) %>%
+  ungroup()
+
+result_list <- list()
+
+for (neuron in unique(session_df$siteID)) {
+  neuron_data <- session_df %>%
+    filter(siteID == neuron)
+
+  first_half <- neuron_data %>%
+    filter(trial_half == "First Half") %>%
+    pull(mean_fr)
+
+  second_half <- neuron_data %>%
+    filter(trial_half == "Second Half") %>%
+    pull(mean_fr)
+
+  if (length(first_half) > 1 && length(second_half) > 1) {
+    test_result <- t.test(first_half, second_half, paired = FALSE)
+    result_list[[as.character(neuron)]] <- test_result
+  } else {
+    result_list[[as.character(neuron)]] <- "Not enough data"
+  }
+}
+
+p_values <- sapply(result_list, function(x) if (is.list(x)) x$p.value else NA) %>% na.omit()
+
+ggplot(data.frame(p_value = p_values), aes(x = p_value)) +
+  geom_histogram(binwidth = 0.05, fill = "skyblue", color = "black") +
+  labs(
+    title = "Figure 3: Distribution of p-values Across All Neurons",
+    x = "p-value",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  geom_vline(xintercept = 0.05, linetype = "dashed", color = "red") +
+  annotate("text", x = 0.05, y = max(table(cut(p_values, breaks=seq(0,1,0.05)))), 
+           label = "p = 0.05", vjust = -1, color = "red")
+```
+The above visualization represents a distribution of p-values for t-tests evaluating if, for each neuron, there was a statistically significant difference between the first half and last half of trials, in terms of firing rate. A p-value less than 0.05 indicates that there *is* a statistically significant difference, for a given neuron.
+
+Somewhat surprisingly, for a majority of neurons, there does seem to be a statistically significant difference between the first half and the last half of trials, in terms of firing rate. This shows somewhat of a drift effect.
+
+To be fair, this distribution does not account for the role that the different stimuli play in differences between the first and second half. Thus, the next step was to run a two-way ANOVA with stimulus as a covariate.
+
+```{r}
+session_df <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  group_by(siteID, trial_number, labels.natural_scene_stimulus_id) %>%
+  summarise(mean_fr = mean(!!sym(selected_time_window)), .groups = "drop") %>%
+  group_by(siteID) %>%
+  arrange(trial_number) %>%
+  mutate(
+    trial_rank = row_number(),
+    total_trials = n(),
+    trial_half = ifelse(trial_rank <= total_trials / 2, "First Half", "Second Half")
+  ) %>%
+  ungroup()
+
+anova_results <- list()
+
+for (neuron in unique(session_df$siteID)) {
+  neuron_data <- session_df %>%
+    filter(siteID == neuron)
+
+  if (n_distinct(neuron_data$trial_half) > 1 &&
+      n_distinct(neuron_data$labels.natural_scene_stimulus_id) > 1) {
+
+    model <- tryCatch({
+      aov(mean_fr ~ trial_half + labels.natural_scene_stimulus_id, data = neuron_data)
+    }, error = function(e) return(NULL))
+
+    if (!is.null(model)) {
+      summary_tbl <- summary(model)[[1]]
+      p_val <- summary_tbl["trial_half", "Pr(>F)"]
+      anova_results[[as.character(neuron)]] <- p_val
+    } else {
+      anova_results[[as.character(neuron)]] <- NA
+    }
+  } else {
+    anova_results[[as.character(neuron)]] <- NA
+  }
+}
+
+p_values <- unlist(anova_results) %>% na.omit()
+
+ggplot(data.frame(p_value = p_values), aes(x = p_value)) +
+  geom_histogram(binwidth = 0.05, fill = "skyblue", color = "black") +
+  labs(
+    title = "Figure 4: Distribution of p-values Across All Neurons",
+    subtitle = "Two-Way ANOVA, Stimulus as Covariate",
+    x = "p-value",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  geom_vline(xintercept = 0.05, linetype = "dashed", color = "red") +
+  annotate("text", x = 0.05, y = max(table(cut(p_values, breaks=seq(0,1,0.05)))), 
+           label = "p = 0.05", vjust = -1, color = "red")
+
+```
+Clearly, the distribution of the p-values is essentially the same. This shows that accounting for stimulus in this ANOVA does not change the fact that neurons are adaptable between the first and second half and, therefore, there are statistically significant differences between the first and second half.
+
+The second part of analysis was to determine if stimulus ranking differed in various components of the dataset. The following graph is a naive first attempt at comparing stimulus rankings across the first half of the dataset and the last half of the dataset (for a given neuron).
+
+```{r}
+valid_combos <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  distinct(siteID, site_info.ephys_session_id)
+
+selected_pair <- valid_combos %>% sample_n(1)
+
+selected_siteID <- selected_pair$siteID
+selected_session <- selected_pair$site_info.ephys_session_id
+
+single_neuron_df <- binned_data %>%
+  filter(siteID == selected_siteID, site_info.ephys_session_id == selected_session, !is.na(!!sym(selected_time_window))) %>%
+  arrange(trial_number)
+
+total_trials <- n_distinct(single_neuron_df$trial_number)
+half_point <- floor(total_trials / 2)
+
+sorted_trials <- sort(unique(single_neuron_df$trial_number))
+
+first_half_trials <- sorted_trials[1:half_point]
+second_half_trials <- sorted_trials[(half_point + 1):length(sorted_trials)]
+
+first_half_summary <- single_neuron_df %>%
+  filter(trial_number %in% first_half_trials) %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarise(mean_fr = mean(!!sym(selected_time_window)), .groups = "drop") %>%
+  arrange(desc(mean_fr)) %>%
+  mutate(rank = row_number())
+
+second_half_summary <- single_neuron_df %>%
+  filter(trial_number %in% second_half_trials) %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarise(mean_fr = mean(!!sym(selected_time_window)), .groups = "drop") %>%
+  arrange(desc(mean_fr)) %>%
+  mutate(rank = row_number())
+
+
+library(scales)
+first_half_summary <- first_half_summary %>%
+  mutate(
+    norm_rank = (rank - 1) / (n() - 1), 
+    fill_color = scales::col_numeric(
+  palette = c("#08306B", "#B3CDE3", "#FFFFFF"),
+  domain = c(0, 1))(norm_rank))
+
+second_half_summary <- second_half_summary %>%
+  left_join(first_half_summary %>% select(labels.natural_scene_stimulus_id, fill_color),
+            by = "labels.natural_scene_stimulus_id")
+
+
+plot_first <- ggplot(first_half_summary,
+                     aes(x = reorder(labels.natural_scene_stimulus_id, -mean_fr),
+                         y = mean_fr, fill = fill_color)) +
+  geom_col() +
+  scale_fill_identity() +
+  labs(
+    title = "First Half Stimulus Rankings",
+    subtitle = paste("Neuron:", selected_siteID, "| Session:", selected_session),
+    x = "Stimulus ID",
+    y = "Mean Firing Rate"
+  ) +
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 2 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+plot_second <- ggplot(second_half_summary,
+                      aes(x = reorder(labels.natural_scene_stimulus_id, -mean_fr),
+                          y = mean_fr, fill = fill_color)) +
+  geom_col() +
+  scale_fill_identity() +
+  labs(
+    title = "Second Half Stimulus Rankings",
+    subtitle = paste("Neuron:", selected_siteID, "| Session:", selected_session),
+    x = "Stimulus ID",
+    y = "Mean Firing Rate"
+  ) +
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 2 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+
+library(patchwork)
+g_all <- plot_first + plot_second + plot_layout(ncol = 1) + 
+  plot_annotation(title = "Figure 5: Stimulus Rankings for First and Second Half of Trials", subtitle = "For a selected neuron and session")
+
+g_all
+```
+The rankings are slightly different between the first and last half, though are large amounts of overlaps in the best-performing (and worst-performing) stimuli. As expected, this naive analysis is inconclusive to show a true difference between the first and second half of the dataset.
+
+The final component of analysis was to assess *how* many trials were needed to receive an accurate measurement of the rank of stimulus performance. The process to construct the following visualizations were as follows: the first and last trials were taken, and the ranking between their stimulus labels (by mean firing rate) were compared using the Spearman correlation. Then, the first two and last two trials were taken, stimuli were ranked across these two pairs of trials by an average firing rate and again, compared using the Spearman correlation. This continued until all trials for a given neuron were compared. 
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+selected_time_window <- "time.75_275"
+
+valid_combos <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  distinct(siteID, site_info.ephys_session_id)
+
+selected_pair <- valid_combos %>% sample_n(1)
+
+selected_siteID <- selected_pair$siteID
+selected_session <- selected_pair$site_info.ephys_session_id
+
+single_neuron_df <- binned_data %>%
+  filter(siteID == selected_siteID, site_info.ephys_session_id == selected_session, !is.na(!!sym(selected_time_window))) %>%
+  arrange(trial_number)
+
+single_neuron_df <- single_neuron_df %>%
+  arrange(trial_number) %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  mutate(stimulus_count = row_number()) %>%
+  ungroup() %>%
+  select(siteID, labels.natural_scene_stimulus_id, trial_number, all_of(selected_time_window), stimulus_count)
+
+max_reps <- max(single_neuron_df$stimulus_count)
+
+rank_matrix_list <- lapply(1:max_reps, function(rep) {
+  single_neuron_df %>%
+    filter(stimulus_count == rep) %>%
+    group_by(labels.natural_scene_stimulus_id) %>%
+    summarise(mean_fr = mean(time.75_275), .groups = "drop") %>%
+    mutate(rank = rank(-mean_fr, ties.method = "random")) %>%
+    arrange(rank) %>%
+    mutate(rep_number = rep) %>%
+    select(rep_number, rank, labels.natural_scene_stimulus_id)
+})
+
+rank_matrix <- bind_rows(rank_matrix_list) %>%
+  pivot_wider(
+    names_from = rank,
+    values_from = labels.natural_scene_stimulus_id,
+    names_prefix = "rank_"
+  ) %>%
+  arrange(rep_number)
+```
+
+```{r}
+library(dplyr)
+
+n_total <- nrow(rank_matrix)
+half_n <- floor(n_total / 2)
+
+first_half <- rank_matrix[1:half_n, ]
+second_half <- rank_matrix[(half_n + 1):(2 * half_n), ]
+
+cor_results <- data.frame(n_trials = integer(), spearman_rho = numeric())
+
+for (i in 1:half_n) {
+  ranks_first <- first_half[1:i, ] %>% select(-rep_number) %>% as.matrix()
+  ranks_second <- second_half[1:i, ] %>% select(-rep_number) %>% as.matrix()
+  
+  ranks_first <- as.data.frame(lapply(ranks_first, as.numeric))
+  ranks_second <- as.data.frame(lapply(ranks_second, as.numeric))
+  
+  mean_rank_first <- colMeans(ranks_first, na.rm = TRUE)
+  mean_rank_second <- colMeans(ranks_second, na.rm = TRUE)
+
+  cor_val <- cor(mean_rank_first, mean_rank_second, method = "spearman")
+  
+  cor_results <- bind_rows(cor_results, data.frame(n_trials = i, spearman_rho = cor_val))
+}
+
+cor_results$true_number_trials <- 2*cor_results$n_trials
+ggplot(cor_results, aes(x = true_number_trials, y = spearman_rho)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Figure 6: Spearman Correlation Between First and Last N Trials",
+    subtitle = paste("Neuron ID:", selected_siteID),
+    x = "Number of Trials (N)",
+    y = "Spearman correlation"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+selected_time_window <- "time.75_275"
+
+valid_combos <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  distinct(siteID, site_info.ephys_session_id)
+
+selected_pairs <- valid_combos %>% sample_n(4)
+
+plot_list <- list()
+
+for (j in 1:4) {
+  selected_siteID <- selected_pairs$siteID[j]
+  selected_session <- selected_pairs$site_info.ephys_session_id[j]
+
+  single_neuron_df <- binned_data %>%
+    filter(siteID == selected_siteID,
+           site_info.ephys_session_id == selected_session,
+           !is.na(!!sym(selected_time_window))) %>%
+    arrange(trial_number)
+
+  single_neuron_df <- single_neuron_df %>%
+    group_by(labels.natural_scene_stimulus_id) %>%
+    mutate(stimulus_count = row_number()) %>%
+    ungroup() %>%
+    select(siteID, labels.natural_scene_stimulus_id, trial_number, all_of(selected_time_window), stimulus_count)
+
+  max_reps <- max(single_neuron_df$stimulus_count)
+
+  rank_matrix_list <- lapply(1:max_reps, function(rep) {
+    single_neuron_df %>%
+      filter(stimulus_count == rep) %>%
+      group_by(labels.natural_scene_stimulus_id) %>%
+      summarise(mean_fr = mean(.data[[selected_time_window]]), .groups = "drop") %>%
+      mutate(rank = rank(-mean_fr, ties.method = "random")) %>%
+      arrange(rank) %>%
+      mutate(rep_number = rep) %>%
+      select(rep_number, rank, labels.natural_scene_stimulus_id)
+  })
+
+  rank_matrix <- bind_rows(rank_matrix_list) %>%
+    pivot_wider(
+      names_from = rank,
+      values_from = labels.natural_scene_stimulus_id,
+      names_prefix = "rank_"
+    ) %>%
+    arrange(rep_number)
+
+  n_total <- nrow(rank_matrix)
+  half_n <- floor(n_total / 2)
+
+  first_half <- rank_matrix[1:half_n, ]
+  second_half <- rank_matrix[(half_n + 1):(2 * half_n), ]
+
+  cor_results <- data.frame(n_trials = integer(), spearman_rho = numeric())
+
+  for (i in 1:half_n) {
+    ranks_first <- first_half[1:i, ] %>% select(-rep_number) %>% as.matrix()
+    ranks_second <- second_half[1:i, ] %>% select(-rep_number) %>% as.matrix()
+
+    ranks_first <- as.data.frame(lapply(ranks_first, as.numeric))
+    ranks_second <- as.data.frame(lapply(ranks_second, as.numeric))
+
+    mean_rank_first <- colMeans(ranks_first, na.rm = TRUE)
+    mean_rank_second <- colMeans(ranks_second, na.rm = TRUE)
+
+    cor_val <- cor(mean_rank_first, mean_rank_second, method = "spearman")
+
+    cor_results <- bind_rows(cor_results, data.frame(n_trials = i, spearman_rho = cor_val))
+  }
+
+  cor_results$true_number_trials <- 2*cor_results$n_trials
+  
+  p <- ggplot(cor_results, aes(x = n_trials, y = spearman_rho)) +
+    geom_line() +
+    geom_point() +
+    labs(
+      title = paste("Neuron ID:", selected_siteID),
+      x = "Number of Trials (N)",
+      y = "Spearman correlation"
+    ) +
+    theme_minimal()
+
+  plot_list[[j]] <- p
+}
+
+library(patchwork)
+final_plot <- wrap_plots(plot_list, ncol = 2) +
+  plot_annotation(
+    title = "Figure 7: Spearman Correlation Across Multiple Neurons"
+  )
+final_plot
+```
+
+The Spearman correlation plots still look odd--would want to talk through before writing down conclusions.

@@ -1,0 +1,422 @@
+---
+title: "Neuron Variability Report"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r echo=FALSE, warning = FALSE, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(ggbeeswarm)
+library(gridExtra)
+library(grid)
+library(rlang)
+library(patchwork)
+```
+
+The goal of this document is to provide information about the *variability* in neural responses to stimuli. It attempts to summarize all the research I've done so far on this topic, and frame it in a way that is concise and helpful for further neural research. It covers the four following main subsections:
+
+* Do responses differ meaningfully across stimuli?
+* Do different neurons respond differently to different stimuli?
+* How does the signal:noise ratio vary between neurons?
+* How does the consistency of a neuron response over time a stimulus is shown?
+
+## Part 1: Stimuli response for a given neuron and across all neurons
+
+The visualization below represents the firing rates of four examples neuron as it responds to different stimuli across all trials--alongside the *standard error* values represented by red error bars.
+
+```{r}
+load("copy_creation_VISp_200bins_25sampled.Rda")
+
+selected_time_window <- "time.75_275"
+
+site_ids <- unique(binned_data$siteID)
+selected_siteIDs <- sample(site_ids, 4)
+
+time_bounds <- regmatches(selected_time_window, gregexpr("[0-9]+", selected_time_window))[[1]]
+num1 <- as.numeric(time_bounds[1])
+num2 <- as.numeric(time_bounds[2])
+spike_count_factor <- num2 - num1
+hz_conv_factor <- 1000
+
+number_of_trials <- length(unique(binned_data$trial_number))
+
+single_neuron_df <- binned_data %>%
+  filter(siteID %in% selected_siteIDs, !is.na(!!sym(selected_time_window))) %>%
+  group_by(siteID, labels.natural_scene_stimulus_id) %>%
+  summarize(
+    mean_fr = mean(!!sym(selected_time_window), na.rm = TRUE) * hz_conv_factor,
+    sd_fr = sd(!!sym(selected_time_window), na.rm = TRUE) * hz_conv_factor,
+    se_fr = sd_fr / sqrt(number_of_trials),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    siteID_index = match(siteID, selected_siteIDs),
+    labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)
+  )
+
+g1 = single_neuron_df %>%
+  filter(siteID_index == 1) %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)) %>% ggplot(aes(x = labels.natural_scene_stimulus_id, 
+                                           y = mean_fr))+
+  geom_point()+
+  geom_errorbar(aes(ymin = mean_fr - se_fr, 
+                    ymax = mean_fr + se_fr), 
+                width = 0.2, color = "red")+
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus", y = "Mean Firing Rate", title = "Firing Rate by Stimulus",
+       subtitle = paste(paste("siteID:", selected_siteIDs[1], sep = " "), sep = ", "))
+
+g2 = single_neuron_df %>%
+  filter(siteID_index == 2) %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)) %>% ggplot(aes(x = labels.natural_scene_stimulus_id, 
+                                           y = mean_fr))+
+  geom_point()+
+  geom_errorbar(aes(ymin = mean_fr - se_fr, 
+                    ymax = mean_fr + se_fr), 
+                width = 0.2, color = "red")+
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus", y = "Mean Firing Rate", title = "Firing Rate by Stimulus",
+       subtitle = paste(paste("siteID:", selected_siteIDs[2], sep = " "), sep = ", "))
+
+g3 = single_neuron_df %>%
+  filter(siteID_index == 3) %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)) %>% ggplot(aes(x = labels.natural_scene_stimulus_id, 
+                                           y = mean_fr))+
+  geom_point()+
+  geom_errorbar(aes(ymin = mean_fr - se_fr, 
+                    ymax = mean_fr + se_fr), 
+                width = 0.2, color = "red")+
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus", y = "Mean Firing Rate", title = "Firing Rate by Stimulus",
+       subtitle = paste(paste("siteID:", selected_siteIDs[3], sep = " "), sep = ", "))
+
+g4 = single_neuron_df %>%
+  filter(siteID_index == 4) %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)) %>% ggplot(aes(x = labels.natural_scene_stimulus_id, 
+                                           y = mean_fr))+
+  geom_point()+
+  geom_errorbar(aes(ymin = mean_fr - se_fr, 
+                    ymax = mean_fr + se_fr), 
+                width = 0.2, color = "red")+
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus", y = "Mean Firing Rate", title = "Firing Rate by Stimulus",
+       subtitle = paste(paste("siteID:", selected_siteIDs[4], sep = " "), sep = ", "))
+
+g_all <- g1 + g2 + g3 + g4 + plot_layout(ncol = 2) + 
+  plot_annotation(title = "Figure 1: Stimulus Drop-Off Plots for Four Example Neurons")
+g_all
+```
+To be clear, this should not be a huge surprise. Some stimuli will naturally elicit strong responses from a brain region (in this case, VISp in a mouse model). However, the extent of the drop-off in firing rate from a neuron's "best" stimulus to its "worst" is interesting. It also encourages further analysis as to stimuli response across all neurons, which will be fleshed out below.
+
+In order to provide a full picture of the accuracy of these estimates, below are two selected neurons with both standard errors and standard deviations shown. 
+
+```{r}
+selected_time_window <- "time.75_275"
+
+site_ids <- unique(binned_data$siteID)
+selected_siteIDs <- sample(site_ids, 4)
+
+numbers <- regmatches(selected_time_window, gregexpr("[0-9]+", selected_time_window))[[1]]
+num1 <- as.numeric(numbers[1])
+num2 <- as.numeric(numbers[2])
+spike_count_factor <- num2 - num1
+hz_conv_factor <- 1000
+
+number_of_trials <- length(unique(binned_data$trial_number))
+
+single_neuron_df <- binned_data %>%
+  filter(siteID %in% selected_siteIDs, !is.na(!!sym(selected_time_window))) %>%
+  group_by(siteID, labels.natural_scene_stimulus_id) %>%
+  summarize(
+    mean_fr = mean(!!sym(selected_time_window), na.rm = TRUE) * hz_conv_factor,
+    sd_fr = sd(!!sym(selected_time_window), na.rm = TRUE) * hz_conv_factor,
+    se_fr = sd_fr / sqrt(number_of_trials),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    siteID_index = match(siteID, selected_siteIDs),
+    labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)
+  )
+
+g1 = single_neuron_df %>%
+  filter(siteID_index == 1) %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)) %>% ggplot(aes(x = labels.natural_scene_stimulus_id, 
+                                           y = mean_fr))+
+  geom_point()+
+  geom_errorbar(aes(ymin = mean_fr - se_fr, 
+                    ymax = mean_fr + se_fr), 
+                width = 0.2, color = "red")+
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus", y = "Mean Firing Rate", title = "Stimulus Drop-off (with SE)",
+       subtitle = paste(paste("siteID:", selected_siteIDs[1], sep = " "), sep = ", "))
+
+g2 = single_neuron_df %>%
+  filter(siteID_index == 2) %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)) %>% ggplot(aes(x = labels.natural_scene_stimulus_id, 
+                                           y = mean_fr))+
+  geom_point()+
+  geom_errorbar(aes(ymin = mean_fr - se_fr, 
+                    ymax = mean_fr + se_fr), 
+                width = 0.2, color = "red")+
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus", y = "Mean Firing Rate", title = "Stimulus Drop-off (with SE)",
+       subtitle = paste(paste("siteID:", selected_siteIDs[2], sep = " "), sep = ", "))
+
+g3 = single_neuron_df %>%
+  filter(siteID_index == 1) %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)) %>% ggplot(aes(x = labels.natural_scene_stimulus_id, 
+                                           y = mean_fr))+
+  geom_point()+
+  geom_errorbar(aes(ymin = mean_fr - sd_fr, 
+                    ymax = mean_fr + sd_fr), 
+                width = 0.2, color = "red")+
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus", y = "Mean Firing Rate", title = "Stimulus Drop-off (with SD)",
+       subtitle = paste(paste("siteID:", selected_siteIDs[1], sep = " "), sep = ", "))
+
+g4 = single_neuron_df %>%
+  filter(siteID_index == 2) %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -mean_fr)) %>% ggplot(aes(x = labels.natural_scene_stimulus_id, 
+                                           y = mean_fr))+
+  geom_point()+
+  geom_errorbar(aes(ymin = mean_fr - sd_fr, 
+                    ymax = mean_fr + sd_fr), 
+                width = 0.2, color = "red")+
+  theme_minimal() +
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus", y = "Mean Firing Rate", title = "Stimulus Drop-off (with SD)",
+       subtitle = paste(paste("siteID:", selected_siteIDs[2], sep = " "), sep = ", "))
+
+g_all <- g1 + g2 + g3 + g4 + plot_layout(ncol = 2) + 
+  plot_annotation(title = "Figure 2: Stimulus Drop-Off Plots for Two Select Neurons")
+g_all
+```
+The next step of the analysis was to aggregate across all neurons.
+
+```{r, include = FALSE}
+selected_time_window <- "time.75_275"
+overall_dist_df <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  group_by(labels.natural_scene_stimulus_id, siteID) %>%
+  summarize(mean_fr_hz = mean(!!sym(selected_time_window), na.rm = TRUE)*1000, 
+            sd_fr_hz = sd(!!sym(selected_time_window), na.rm = TRUE)*1000)
+```
+
+```{r}
+df_no_outliers <- overall_dist_df %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  mutate(mean_fr_hz = mean_fr_hz) %>%
+  mutate(
+    Q1 = quantile(mean_fr_hz, 0.25),
+    Q3 = quantile(mean_fr_hz, 0.75),
+    IQR = Q3 - Q1,
+    lower_bound = Q1 - 1.5 * IQR,
+    upper_bound = Q3 + 1.5 * IQR
+  ) %>%
+  filter(mean_fr_hz >= lower_bound & mean_fr_hz <= upper_bound) %>%
+  select(-Q1, -Q3, -IQR, -lower_bound, -upper_bound)
+
+five_no_summary <- df_no_outliers %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarize(min = min(mean_fr_hz),
+            Q1 = quantile(mean_fr_hz, 0.25),
+            median = median(mean_fr_hz),
+            Q3 = quantile(mean_fr_hz, 0.75),
+            max = max(mean_fr_hz))
+
+five_no_summary <- five_no_summary %>%
+  mutate(labels.natural_scene_stimulus_id = reorder(labels.natural_scene_stimulus_id, -median))
+
+ggplot(data = five_no_summary, aes(x = labels.natural_scene_stimulus_id, 
+                                   y = median))+
+  geom_point()+
+  scale_x_discrete(labels = function(x) ifelse(seq_along(x) %% 2 == 1, x, "")) +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus Labels", y = "Median Firing Rate", title = "Figure 3: Median Firing Rate by Stimulus, Across All Neurons")
+```
+
+Again, aggregated across all neurons, we can see that there is a clear drop off in terms of the best performing stimulus to the worst performing stimulus.
+
+```{r}
+df_ranked <- overall_dist_df %>%
+  group_by(siteID) %>%
+  arrange(desc(mean_fr_hz), .by_group = TRUE) %>%
+  mutate(stimulus_rank = row_number()) %>%
+  ungroup()
+
+ggplot(df_ranked, aes(x = stimulus_rank, y = mean_fr_hz, group = siteID, color = factor(siteID))) +
+  geom_line(alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "Figure 4: Individual Neuron Responses Sorted by Stimulus",
+       x = "Stimulus Rank (Best to Worst)",
+       y = "Mean Firing Rate (Hz)",
+       color = "Neuron (siteID)") +
+  theme(legend.position = "none")
+```
+
+The above visualization represents each individual neuron's "drop-off" curve. In other words, it reflects how each neuron's firing rate varies from *its* "best" stimulus to its "worst" stimulus. Simply put, the pattern of drop off is essentially the same across all neurons.
+
+To further emphasize this point, the neural drop-off curves on a shuffled dataset are included below.
+
+```{r}
+shuffled_df <- binned_data
+shuffled_df$labels.natural_scene_stimulus_id <- sample(shuffled_df$labels.natural_scene_stimulus_id)
+
+overall_dist_shuffled <- shuffled_df %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  group_by(labels.natural_scene_stimulus_id, siteID) %>%
+  summarize(mean_fr_hz = mean(!!sym(selected_time_window), na.rm = TRUE)*1000, 
+            sd_fr_hz = sd(!!sym(selected_time_window), na.rm = TRUE)*1000)
+
+shuffled_df_ranked <- overall_dist_shuffled %>%
+  group_by(siteID) %>%
+  arrange(desc(mean_fr_hz), .by_group = TRUE) %>%
+  mutate(stimulus_rank = row_number()) %>%
+  ungroup()
+
+ggplot(shuffled_df_ranked, aes(x = stimulus_rank, y = mean_fr_hz, group = siteID, color = factor(siteID))) +
+  geom_line(alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "Figure 5: Individual Neuron Responses Sorted by Stimulus (Shuffled Data)",
+       x = "Stimulus Rank (Best to Worst)",
+       y = "Mean Firing Rate (Hz)",
+       color = "Neuron (siteID)") +
+  theme(legend.position = "none")
+```
+These curves are slightly flatter than the *actual* drop-off curves, which provides credence to the true extent of drop-off illustrated above.
+
+## Part 2: Do some neurons respond differently to different stimuli?
+
+The next phase of analysis included looking at whether there was consistency in which stimuli elicited the strongest neural responses. 
+
+This was determined by computing the "median rank" of a given stimulus across all neurons. If all neurons similarly, there would be a few stimuli with a high "median rank" (i.e., the stimuli would have elicited relatively high firing rates for many neurons) and some with a very low "median rank". If neurons were more variable in how they responded to a given stimulus, the "median rank" would be more similar across stimuli.  
+
+```{r}
+df_ranked %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarize(median_rank = median(stimulus_rank)) %>%
+  arrange(median_rank) %>%
+  mutate(labels.natural_scene_stimulus_id = factor(labels.natural_scene_stimulus_id,
+                                                   levels = labels.natural_scene_stimulus_id)) %>%
+  ggplot(aes(x = labels.natural_scene_stimulus_id, y = median_rank)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  scale_x_discrete(breaks = function(x) x[seq(1, length(x), by = 3)])+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(x = "Stimulus Label", y = "Median Rank", title = "Figure 6: Median Rank of Each Stimulus Across Neurons")
+```
+
+Clearly, in this analysis, we can see there is some consistency in neurons responding to a given stimuli. Certain stimuli, like "5", "6", and "16" seem to result in significantly higher firing rates of a given neuron (and therefore higher ranks) than those like "61", "36" and "62". 
+
+From the first two parts, two takeaways have been made clear: 1) Individual neurons see a clear drop-off in firing rate responses from the best to worst stimulus and 2) Some stimuli seem to elicit stronger neural responses from individual neurons than other stimuli. Thus, using the VISp data set as a framework, there seems to be a fair amount of consistency among neurons.
+
+
+## Part 3: Signal/noise ratio between neurons
+
+One mode of analysis in order to assess variability within a given neuron is to compute the coefficient of variation/Fano Factor for each neuron. These two metrics were computed in the selected time window across all sessions for each neuron. Then, a histogram for each metric was plotted to show the distribution of CV/Fano Factor values for all neurons.
+
+```{r}
+signal_noise_df <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  mutate(firing_rate_hz = !!sym(selected_time_window)*1000) %>%
+  group_by(siteID) %>%
+  summarize(mean = mean(firing_rate_hz),
+            var = var(firing_rate_hz),
+            sd = sd(firing_rate_hz),
+            coefficient_variation = (sd(firing_rate_hz)/mean(firing_rate_hz)),
+         fano_factor = (var(firing_rate_hz))/mean(firing_rate_hz))
+
+p1 = ggplot(data = signal_noise_df, aes(x = coefficient_variation))+
+  geom_histogram(bins = 50, fill = "blue")+
+  labs(x = "Coefficient of Variation (CV) Distribution", y = "Frequency", 
+       title = "Coefficient of Variation--Individual Neurons")+
+  geom_vline(xintercept = 1, col = "red")
+p2 = ggplot(data = signal_noise_df, aes(x = fano_factor))+
+  geom_histogram(bins = 50, fill = "blue")+
+  labs(x = "Fano Factor Distribution", y = "Frequency", 
+       title = "Fano Factor --Individual Neurons")
+
+p_all <- p1 + p2 + plot_layout(ncol = 2) + 
+  plot_annotation(title = "Figure 7: Distribution of CV and Fano Factor Values for Each Neuron")
+p_all
+```
+
+Overall, the CV and Fano Factor for individual neurons values diverge in terms of interpretation. The Fano Factor value skews relatively low, while the coefficient of variation value is pretty high (many neurons are above 1). Though the Fano Factor visualization provides evidence that variability within a given neuron is low, the coefficient of variation indicates that this variability may be high. Thus, the results are mixed here.
+
+This analysis was then done *across* all neurons to assess variability throughout the entire dataset.
+
+```{r}
+cv_across <- binned_data %>%
+  summarise(cv = sd(!!sym(selected_time_window)) / mean(!!sym(selected_time_window))) %>%
+  pull(cv)
+
+ff_across <- binned_data %>%
+  summarise(ff = var(!!sym(selected_time_window)) / mean(!!sym(selected_time_window))) %>%
+  pull(ff)
+
+print(paste("The coefficient of variation across all neurons is:", round(cv_across, 3)))
+print(paste("The Fano Factor across all neurons is:", round(ff_across, 3)))
+```
+
+The same can be said about the CV/Fano Factor values across all neurons. Thus, it is unclear how exactly to interpret the signal:noise ratio in these two contexts. 
+
+## Part 4: Consistency of neural response each time a neuron is shown
+
+The final section of this analysis will focus on consistency within a neuron's response to a stimulus across trials. In other words, for a given neuron, what is the firing rate difference between the first time a stimulus is shown and the last time.
+
+The following analysis takes a given session and, for each neuron, computes the earliest firing rate and latest firing rate. The below histogram represents the full distribution of changes in firing rates (so each observation represents a stimulus-neuron pair).
+
+```{r}
+session_index <- sample(1:length(unique(binned_data$site_info.ephys_session_id)), 1)
+selected_session <- unique(binned_data$site_info.ephys_session_id)[session_index]
+one_session_data <- binned_data %>%
+  filter(site_info.ephys_session_id == selected_session) %>%
+  select(siteID, trial_number, all_of(selected_time_window), labels.natural_scene_stimulus_id)
+colnames(one_session_data)[3] <- "selected_time_window"
+
+firing_rate_change <- one_session_data %>%
+  group_by(siteID, labels.natural_scene_stimulus_id) %>%
+  summarize(
+    earliest_fr = selected_time_window[which.min(trial_number)],
+    latest_fr = selected_time_window[which.max(trial_number)],
+    firing_rate_change = (earliest_fr - latest_fr)*hz_conv_factor,
+    .groups = "drop"
+  )
+
+ggplot(data = firing_rate_change, aes(x = firing_rate_change))+
+  geom_histogram(fill = "blue", bins = 30)+
+  labs(x = "Change in Firing Rate (Earliest Trial - Latest Trial)", y = "Frequency", 
+       title = "Figure 8: Distribution of Firing Rate Consistency, Across All Neurons",
+       subtitle = paste("Median Change =", round(median(firing_rate_change$firing_rate_change, 1))))
+```
+
+With a median change in firing rate of 0, it looks like a given neuron does not seem to change its neural response to a stimulus between the first trial and the last trial.
+
+## Takeaways
+
+In conclusion, there are a few primary takeaways from this part of analysis.
+
+* Neurons, at least in the VISp region of the mouse brain, do tend to see a drop-off in firing rates from their best to worst stimulus. This applies to both individual neurons and averages across all neurons.
+* The signal:noise ratio analysis provided inconclusive results as to both the variability in stimulus response within a given neuron and between neurons.
+* It seems that there is generally little change between the first time a stimulus is shown or the last time it is shown, for a given neuron.
+

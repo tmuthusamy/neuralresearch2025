@@ -1,0 +1,255 @@
+---
+title: "High Firing Rate Report"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r echo=FALSE, warning = FALSE, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(ggbeeswarm)
+library(gridExtra)
+library(patchwork)
+```
+
+This report focuses on answering the question: Do all neurons fire high to the same stimulus?
+
+```{r}
+load("copy_creation_VISp_200bins_25sampled.Rda")
+```
+
+## Part 1: Are some neurons just "high responders"?
+
+One potential pitfall researchers may run into in analyzing neural data is relying too heavily on high responding neurons in justification for a high overall neural response. In other words, a concern could be that certain high-performing neurons are inflating which stimuli are seen as eliciting a strong response.
+
+One method to assess whether certain neurons just overall perform higher than others, even at their "worst" stimuli is to construct a beeswarm plot. The below beeswarm plot reflects the firing rate of all neurons in the data set at their max, Q3, median, Q1 and minimum stimulus.
+
+```{r include = FALSE}
+selected_time_window <- "time.75_275"
+
+time_bounds <- regmatches(selected_time_window, gregexpr("[0-9]+", selected_time_window))[[1]]
+num1 <- as.numeric(time_bounds[1])
+num2 <- as.numeric(time_bounds[2])
+spike_count_factor <- num2 - num1
+hz_conv_factor <- 1000
+
+number_of_trials <- length(unique(binned_data$trial_number))
+number_of_labels <- length(unique(binned_data$labels.natural_scene_stimulus_id))
+
+all_neuron_df <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  group_by(labels.natural_scene_stimulus_id, siteID) %>%
+  summarize(mean_fr = mean(!!sym(selected_time_window), na.rm = TRUE)*hz_conv_factor, 
+            sd_fr = sd(!!sym(selected_time_window), na.rm = TRUE)*hz_conv_factor)
+```
+
+```{r}
+df_summary <- all_neuron_df %>%
+  group_by(siteID) %>%
+  summarise(
+    max_fr = max(mean_fr),
+    Q3_fr = quantile(mean_fr, 0.75, na.rm = TRUE),
+    median_fr = median(mean_fr, na.rm = TRUE),
+    Q1_fr = quantile(mean_fr, 0.25, na.rm = TRUE),
+    min_fr = min(mean_fr)
+  ) %>%
+  left_join(all_neuron_df, by = c("siteID" = "siteID")) %>%
+  group_by(siteID) %>%
+  summarise(
+    max_stimulus = labels.natural_scene_stimulus_id[which.max(mean_fr)],
+    max_fr = max_fr[1],
+    Q3_stimulus = labels.natural_scene_stimulus_id[which.min(abs(mean_fr - Q3_fr))],
+    Q3_fr = Q3_fr[1],
+    median_stimulus = labels.natural_scene_stimulus_id[which.min(abs(mean_fr - median_fr))],
+    median_fr = median_fr[1],
+    Q1_stimulus = labels.natural_scene_stimulus_id[which.min(abs(mean_fr - Q1_fr))],
+    Q1_fr = Q1_fr[1],
+    min_stimulus = labels.natural_scene_stimulus_id[which.min(mean_fr)],
+    min_fr = min_fr[1]
+  )
+
+b1 <- ggplot(df_summary, aes(x = "", y = max_fr)) +
+  geom_beeswarm(col = "blue") +
+  theme_minimal() +
+  labs(x = "", y = "Firing Rate", title = "Max Firing Rate")
+b2 <- ggplot(df_summary, aes(x = "", y = Q3_fr)) +
+  geom_beeswarm(col = "blue") +
+  theme_minimal() +
+  labs(x = "", y = "Firing Rate", title = "Firing Rate at Q3 Stimulus")
+b3 <- ggplot(df_summary, aes(x = "", y = median_fr)) +
+  geom_beeswarm(col = "blue") +
+  theme_minimal() +
+  labs(x = "", y = "Firing Rate", title = "Firing Rate at Median Stimulus")
+b4 <- ggplot(df_summary, aes(x = "", y = Q1_fr)) +
+  geom_beeswarm(col = "blue") +
+  theme_minimal() +
+  labs(x = "", y = "Q1 Firing Rate", title = "Firing Rate at Q1 Stimulus")
+b5 <- ggplot(df_summary, aes(x = "", y = min_fr)) +
+  geom_beeswarm(col = "blue") +
+  theme_minimal() +
+  labs(x = "", y = "Minimum Firing Rate", title = "Firing Rate at Min Stimulus")
+
+b_all <- b1 + b2 + b3 + b4 + b5 + plot_layout(ncol = 2) + 
+  plot_annotation(title = "Figure 1: Firing Rate Across Quantiles, Across All Neurons")
+b_all
+```
+
+We can clearly see that some neurons simply fire higher than others. For instance, there are several neurons with a firing rate of around 10 or 20 at its *minimum* stimulus, while there are also a fair amount with a firing rate of 0. Thus, caution must be taken when evaluating averages so that select neurons with already high firing rates do not artificially inflate statistical summaries.
+
+## Part 2: How to best evaluate neural response to certain stimuli?
+
+A very common question that neural researchers attempt to determine is which stimulus elicits the strongest neural response. As implied in the previous section, this can be a challenging question to answer as certain "high-firing" neurons may unfairly inflate the average firing rate for a given stimulus. Thus, two methods were used and compared to determine the "best" stimuli:
+
+**Method 1: Naive Average**
+
+Method 1 is the most simple approach: finding the average firing rate across all neurons for each stimulus.
+
+```{r}
+collapsed_neuron_df <- binned_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarize(mean_fr = mean(!!sym(selected_time_window), na.rm = TRUE)*spike_count_factor,
+            mean_fr_hz = mean(!!sym(selected_time_window), na.rm = TRUE)*hz_conv_factor,
+            sd_fr = sd(!!sym(selected_time_window), na.rm = TRUE)*spike_count_factor)
+
+collapsed_neuron_df %>%
+  arrange(desc(mean_fr)) %>%
+  mutate(labels.natural_scene_stimulus_id = factor(labels.natural_scene_stimulus_id,
+                                                   levels = labels.natural_scene_stimulus_id)) %>%
+  ggplot(aes(x = labels.natural_scene_stimulus_id)) +
+  geom_bar(aes(y = mean_fr, fill = "Spike Counts"), stat = "identity", position = "dodge")+
+  geom_line(aes(y = mean_fr_hz/5, group = 1, color = "Firing Rate (in Hz)"), size = 1)+
+  scale_y_continuous(
+    name = "Spike Counts",
+    sec.axis = sec_axis(~ .*5, name = "Firing Rate (in Hz)")
+  )+
+  scale_fill_manual(values = c("blue"))+
+  scale_color_manual(values = c("transparent"))+
+  scale_x_discrete(breaks = function(x) x[seq(1, length(x), by = 3)]) + 
+  labs(x = "Stimulus Label", y = "Mean Spike Count", title = "Figure 2: Neural Response to Stimuli -- Across All Neurons")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+ 
+  guides(fill = "none", color = "none")
+
+```
+
+**Method 2: Z-Score**
+
+Method 2 attempts to remove the potential bias given to high-firing neurons. By first applying a z-score transformation to all neurons on a neuron-by-neuron basis, and *then* computing the average z-scored firing rate for a given stimulus, the "ranking" of stimuli from best to worst should be given more credence.
+
+```{r}
+z_score_df <- all_neuron_df %>%
+  group_by(siteID) %>%
+  mutate(z_mean = (mean_fr - mean(mean_fr)) / sd(mean_fr)) %>%
+  ungroup() %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarize(z_mean_fr = mean(z_mean))
+
+z_score_df %>%
+  arrange(desc(z_mean_fr)) %>%
+  mutate(labels.natural_scene_stimulus_id = factor(labels.natural_scene_stimulus_id,
+                                                   levels = unique(labels.natural_scene_stimulus_id))) %>%
+  ggplot(aes(x = labels.natural_scene_stimulus_id)) +
+  geom_bar(aes(y = z_mean_fr, fill = "Spike Counts"), stat = "identity", position = "dodge")+
+  scale_fill_manual(values = c("blue"))+
+  scale_color_manual(values = c("transparent"))+
+  scale_x_discrete(breaks = function(x) x[seq(1, length(x), by = 3)]) + 
+  labs(x = "Stimulus Label", y = "Mean Spike Count (Z-Score Transformed)", title = "Figure 3: Neural Response to Stimuli -- Across All Neurons")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+ 
+  guides(fill = "none", color = "none")
+```
+
+Both of the aforementioned methods yielded a set of rankings of stimuli from "best" to "worst" stimulus, in terms of the firing rate it elicited across all neurons. These two rankings were then compared. The histogram below reflects the difference in ranking for all 119 stimuli in the dataset. 
+
+For instance, stimulus "26" was the best-performing stimulus in both methods. Thus, the rank difference is 0. Stimulus "23" ranked 9th in the naive method, but 7th in the z-score method. Thus, its rank difference is -2. The rank difference across all stimuli are visualized below.
+
+```{r}
+z_score_df <- z_score_df %>%
+  arrange(desc(z_mean_fr))
+
+collapsed_neuron_df <- collapsed_neuron_df %>%
+  arrange(desc(mean_fr))
+
+rank1 <- z_score_df$labels.natural_scene_stimulus_id
+rank2 <- collapsed_neuron_df$labels.natural_scene_stimulus_id
+
+differences_df <- data.frame(stimulus = rank1, rank1 = 1:length(rank1), 
+                             rank2 = match(rank1, rank2))
+
+differences_df <- differences_df %>%
+  mutate(rank_difference = rank2 - rank1)
+
+differences_df$rank_difference <- as.numeric(differences_df$rank_difference)
+ggplot(differences_df, aes(x = rank_difference)) +
+  geom_histogram(bins = 20) +
+  labs(title = "Figure 4: Rank Differences Between Lists", x = "Rank Difference", y = "Frequency")+
+  theme_minimal()
+```
+
+Clearly, though there are some stimulus labels with large differences in ranking based on the two methods, most of the ranks are relatively similar (as evidenced by the cluster in "rank difference" around 0). 
+
+It may also be prudent to show the shuffled version alongside the actual version--particularly of the naive method--to emphasize the nature of the drop-off.
+
+```{r}
+shuffled_data <- binned_data
+shuffled_data$labels.natural_scene_stimulus_id <- sample(shuffled_data$labels.natural_scene_stimulus_id)
+
+shuffled_collapsed_neuron_df <- shuffled_data %>%
+  filter(!is.na(!!sym(selected_time_window))) %>%
+  group_by(labels.natural_scene_stimulus_id) %>%
+  summarize(mean_fr = mean(!!sym(selected_time_window), na.rm = TRUE)*spike_count_factor, 
+            mean_fr_hz = mean(!!sym(selected_time_window), na.rm = TRUE)*hz_conv_factor, 
+            sd_fr = sd(!!sym(selected_time_window), na.rm = TRUE)*spike_count_factor,
+            se_fr = sd_fr/sqrt(number_of_labels))
+
+p1 = collapsed_neuron_df %>%
+  arrange(desc(mean_fr)) %>%
+  mutate(labels.natural_scene_stimulus_id = factor(labels.natural_scene_stimulus_id,
+                                                   levels = labels.natural_scene_stimulus_id)) %>%
+  ggplot(aes(x = labels.natural_scene_stimulus_id)) +
+  geom_bar(aes(y = mean_fr, fill = "Spike Counts"), stat = "identity", position = "dodge")+
+  geom_line(aes(y = mean_fr_hz/5, group = 1, color = "Firing Rate (in Hz)"), size = 1)+
+  scale_y_continuous(
+    name = "Spike Counts",
+    sec.axis = sec_axis(~ .*5, name = "Firing Rate (in Hz)")
+  )+
+  scale_fill_manual(values = c("blue"))+
+  scale_color_manual(values = c("transparent"))+
+  scale_x_discrete(breaks = function(x) x[seq(1, length(x), by = 5)]) + 
+  labs(x = "Stimulus Label", y = "Mean Spike Count", title = "Stimulus Rank")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+ 
+  guides(fill = "none", color = "none")
+
+p2 = shuffled_collapsed_neuron_df %>%
+  arrange(desc(mean_fr)) %>%
+  mutate(labels.natural_scene_stimulus_id = factor(labels.natural_scene_stimulus_id,
+                                                   levels = labels.natural_scene_stimulus_id)) %>%
+  ggplot(aes(x = labels.natural_scene_stimulus_id)) +
+  geom_bar(aes(y = mean_fr, fill = "Spike Counts"), stat = "identity", position = "dodge")+
+  geom_line(aes(y = mean_fr_hz/5, group = 1, color = "Firing Rate (in Hz)"), size = 1)+
+  scale_y_continuous(
+    name = "Spike Counts",
+    sec.axis = sec_axis(~ .*5, name = "Firing Rate (in Hz)")
+  )+
+  scale_fill_manual(values = c("blue"))+
+  scale_color_manual(values = c("transparent"))+
+  scale_x_discrete(breaks = function(x) x[seq(1, length(x), by = 5)]) + 
+  labs(x = "Stimulus Label", y = "Mean Spike Count", title = "Stimulus Rank (Shuffled Data)")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+ 
+  guides(fill = "none", color = "none")
+
+p_all <- p1 + p2 + plot_layout(ncol = 2) + 
+  plot_annotation(title = "Figure 5: Stimulus Ranks (Naive Average) for Shuffled, Non-Shuffled")
+p_all
+```
+
+## Takeaways:
+
+* Some neurons tend to simply have higher firing rates (even at their least-responsive stimulus) than others. However, the distribution of firing rates gets significantly more weighted towards 0 as stimulus progresses from maximum to minimum, which is what we expect.
+* The rankings of stimuli somewhat differ between the "naive" mean calculation and the version with the z-score transform. Thus, there could be a benefit to z-score transform data prior to analyzing which stimulus performed the best, though it may not be *that* big of a deal.
